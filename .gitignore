@@ -27,3 +27,5 @@ Thumbs.db
 # Временные файлы
 temp_*.db
 *.tmp
+
+*.xslx
