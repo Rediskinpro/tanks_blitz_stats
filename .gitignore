@@ -1,0 +1,29 @@
+# База данных
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Логи ошибок
+errors_log.xlsx
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные файлы
+temp_*.db
+*.tmp
