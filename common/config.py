@@ -6,6 +6,16 @@ MAX_ROUNDS = 3
 MAX_WORKERS = 15
 BATCH_WORKERS = 15
 DELAY = 0.1
-DB_FILE = "test_tanks_blitz.db"
 ERRORS_FILE = "errors_log.xlsx"
 TANKS_SAVE_INTERVAL = 100
+
+DB_CONFIG = {
+    'host': 'localhost',
+    'port': 5432,
+    'database': 'tanks_blitz',
+    'user': 'tanks_user',
+    'password': 'DD75832b!7391',
+}
+
+DB_POOL_MIN = 5
+DB_POOL_MAX = 50

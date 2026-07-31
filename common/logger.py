@@ -2,7 +2,7 @@ import pandas as pd
 import threading
 from datetime import datetime
 from common.config import ERRORS_FILE
-from common.db import get_db_connection, db_lock
+from common.db import get_db_connection, release_db_connection, db_lock
 
 error_log = []
 error_log_lock = threading.Lock()
@@ -54,14 +54,15 @@ def save_errors_to_db():
             conn = get_db_connection()
             cursor = conn.cursor()
             try:
+                # Изменён синтаксис плейсхолдеров: :name → %(name)s
                 cursor.executemany('''
-                                   INSERT INTO error_log (timestamp, endpoint, error_field, error_code, error_message, ids)
-                                   VALUES (:timestamp, :endpoint, :error_field, :error_code, :error_message, :ids)
-                                   ''', error_log)
+                    INSERT INTO error_log (timestamp, endpoint, error_field, error_code, error_message, ids)
+                    VALUES (%(timestamp)s, %(endpoint)s, %(error_field)s, %(error_code)s, %(error_message)s, %(ids)s)
+                ''', error_log)
                 conn.commit()
                 print(f"💾 Сохранено {len(error_log)} записей об ошибках в БД")
             except Exception as e:
                 conn.rollback()
                 print(f"❌ Ошибка сохранения ошибок: {e}")
             finally:
-                conn.close()
+                release_db_connection(conn)  # Было: conn.close()

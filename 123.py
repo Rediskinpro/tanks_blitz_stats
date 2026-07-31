@@ -1,47 +1,29 @@
-import os
-import sqlite3
+import requests
+from common.config import API_KEY, BASE_URL
 
-DB_FILE = "test_tanks_blitz.db"
+# Тестовый player_id (возьми из ошибок выше)
+test_player_id = 20100995
 
-# 1. Размеры файлов
-print("=" * 50)
-print("РАЗМЕРЫ ФАЙЛОВ:")
-print("=" * 50)
-for f in os.listdir('.'):
-    if f.startswith(DB_FILE):
-        size_mb = os.path.getsize(f) / 1024 / 1024
-        print(f"  {f}: {size_mb:.2f} MB")
+print(f"Тестовый запрос для игрока {test_player_id}")
+print(f"URL: {BASE_URL}/wotb/tanks/stats/")
 
-# 2. Информация о БД
-conn = sqlite3.connect(DB_FILE)
-print("\n" + "=" * 50)
-print("ИНФОРМАЦИЯ О БД:")
-print("=" * 50)
+response = requests.get(
+    f"{BASE_URL}/wotb/tanks/stats/",
+    params={
+        'application_id': API_KEY,
+        'account_id': test_player_id
+    },
+    timeout=10
+)
 
-page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-page_count = conn.execute("PRAGMA page_count").fetchone()[0]
-freelist = conn.execute("PRAGMA freelist_count").fetchone()[0]
-journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+print(f"HTTP статус: {response.status_code}")
+data = response.json()
+print(f"API статус: {data.get('status')}")
 
-used_mb = (page_count - freelist) * page_size / 1024 / 1024
-free_mb = freelist * page_size / 1024 / 1024
-
-print(f"  Режим журнала: {journal}")
-print(f"  Размер страницы: {page_size} байт")
-print(f"  Всего страниц: {page_count}")
-print(f"  Свободных страниц: {freelist}")
-print(f"  Использовано: {used_mb:.2f} MB")
-print(f"  Свободно (дыры): {free_mb:.2f} MB")
-
-# 3. Количество записей
-print("\n" + "=" * 50)
-print("КОЛИЧЕСТВО ЗАПИСЕЙ:")
-print("=" * 50)
-for table in ['players', 'clans', 'clan_members', 'player_tanks_stats']:
-    try:
-        count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        print(f"  {table}: {count:,}")
-    except:
-        print(f"  {table}: таблица не существует")
-
-conn.close()
+if data.get('status') == 'ok':
+    player_data = data['data'].get(str(test_player_id), [])
+    print(f"Количество танков: {len(player_data)}")
+    if player_data:
+        print(f"Первый танк: {player_data[0]}")
+else:
+    print(f"Ошибка: {data.get('error')}")

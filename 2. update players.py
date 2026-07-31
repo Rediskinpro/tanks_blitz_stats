@@ -2,22 +2,25 @@ import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from common.config import BATCH_SIZE, BATCH_WORKERS
-from common.db import get_db_connection, db_lock
+from common.db import get_db_connection, get_cursor, release_db_connection, db_lock
 from common.api import get_api_data
 from common.logger import log_error, save_errors_to_db, export_errors_to_excel
+from common.memory_monitor import memory_monitor
 
 
 def get_all_player_ids():
     with db_lock:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT player_id FROM players
-            UNION
-            SELECT player_id FROM clan_members
-        ''')
-        player_ids = [row['player_id'] for row in cursor.fetchall()]
-        conn.close()
+        cursor = get_cursor(conn)
+        try:
+            cursor.execute('''
+                SELECT player_id FROM players
+                UNION
+                SELECT player_id FROM clan_members
+            ''')
+            player_ids = [row['player_id'] for row in cursor.fetchall()]
+        finally:
+            release_db_connection(conn)
     print(f"🔍 Найдено {len(player_ids)} уникальных player_id для обновления")
     return player_ids
 
@@ -25,18 +28,20 @@ def get_all_player_ids():
 def get_players_last_battle_times():
     with db_lock:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT player_id, last_battle_time
-            FROM (
-                SELECT player_id, last_battle_time,
-                       ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY collected_date DESC) as rn
-                FROM players
-            )
-            WHERE rn = 1
-        ''')
-        result = {row['player_id']: row['last_battle_time'] for row in cursor.fetchall()}
-        conn.close()
+        cursor = get_cursor(conn)
+        try:
+            cursor.execute('''
+                SELECT player_id, last_battle_time
+                FROM (
+                    SELECT player_id, last_battle_time,
+                           ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY collected_date DESC) as rn
+                    FROM players
+                )
+                WHERE rn = 1
+            ''')
+            result = {row['player_id']: row['last_battle_time'] for row in cursor.fetchall()}
+        finally:
+            release_db_connection(conn)
     print(f"📋 Загружены last_battle_time для {len(result)} игроков из БД")
     return result
 
@@ -54,7 +59,7 @@ def process_players_batch(batch, players_lbt):
 
     with db_lock:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         try:
             current_date = datetime.now().strftime("%Y-%m-%d")
             current_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -97,11 +102,11 @@ def process_players_batch(batch, players_lbt):
                         stat_all_hits, stat_all_losses, stat_all_shots, stat_all_spotted, stat_all_survived_battles,
                         stat_all_win_and_survived, stat_all_wins, stat_rating_battles, stat_rating_capture_points,
                         stat_rating_damage_dealt, stat_rating_damage_received, stat_rating_frags, stat_rating_hits,
-                        stat_rating_losses, stat_rating_mm_rating, stat_rating_shots, stat_rating_spotted,
+                        stat_rating_losses, stat_rating_mm_rating, stat_rating_shots, stat_rating_spotted, 
                         stat_rating_survived_battles, stat_rating_win_and_survived, stat_rating_wins
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(player_id, collected_date) DO UPDATE SET
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(player_id, collected_date) DO UPDATE SET 
                         nickname = excluded.nickname,
                         clan_id = excluded.clan_id,
                         clan_tag = excluded.clan_tag,
@@ -134,60 +139,35 @@ def process_players_batch(batch, players_lbt):
                         stat_rating_win_and_survived = excluded.stat_rating_win_and_survived,
                         stat_rating_wins = excluded.stat_rating_wins
                 ''', (
-                    player_id,
-                    nickname,
-                    clan_id,
-                    clan_tag,
-                    clan_name,
-                    lbt_str,
-                    current_date,
-                    current_datetime,
-                    current_datetime,
-                    stats_all.get('battles'),
-                    stats_all.get('damage_dealt'),
-                    stats_all.get('damage_received'),
-                    stats_all.get('frags'),
-                    stats_all.get('hits'),
-                    stats_all.get('losses'),
-                    stats_all.get('shots'),
-                    stats_all.get('spotted'),
-                    stats_all.get('survived_battles'),
-                    stats_all.get('win_and_survived'),
-                    stats_all.get('wins'),
-                    stats_rating.get('battles'),
-                    stats_rating.get('capture_points'),
-                    stats_rating.get('damage_dealt'),
-                    stats_rating.get('damage_received'),
-                    stats_rating.get('frags'),
-                    stats_rating.get('hits'),
-                    stats_rating.get('losses'),
-                    stats_rating.get('mm_rating'),
-                    stats_rating.get('shots'),
-                    stats_rating.get('spotted'),
-                    stats_rating.get('survived_battles'),
-                    stats_rating.get('win_and_survived'),
-                    stats_rating.get('wins')
+                    player_id, nickname, clan_id, clan_tag, clan_name, lbt_str, current_date, current_datetime, current_datetime,
+                    stats_all.get('battles'), stats_all.get('damage_dealt'), stats_all.get('damage_received'), stats_all.get('frags'),
+                    stats_all.get('hits'), stats_all.get('losses'), stats_all.get('shots'), stats_all.get('spotted'),
+                    stats_all.get('survived_battles'), stats_all.get('win_and_survived'), stats_all.get('wins'),
+                    stats_rating.get('battles'), stats_rating.get('capture_points'), stats_rating.get('damage_dealt'),
+                    stats_rating.get('damage_received'), stats_rating.get('frags'), stats_rating.get('hits'), stats_rating.get('losses'),
+                    stats_rating.get('mm_rating'), stats_rating.get('shots'), stats_rating.get('spotted'),
+                    stats_rating.get('survived_battles'), stats_rating.get('win_and_survived'), stats_rating.get('wins')
                 ))
                 players_saved += 1
 
                 try:
-                    cursor.execute('DELETE FROM clan_members WHERE player_id = ?', (player_id,))
+                    cursor.execute('DELETE FROM clan_members WHERE player_id = %s', (player_id,))
                     cursor.execute('''
                         INSERT INTO clan_members (clan_id, player_id)
-                        VALUES (?, ?)
+                        VALUES (%s, %s)
                     ''', (clan_id, player_id))
                     members_updated += 1
                 except Exception as e:
                     print(f"⚠️ Ошибка обновления clan_members для игрока {player_id}: {e}")
-                    log_error("wotb/clans/accountinfo/", "DB_ERROR", "SQLITE_ERROR", str(e), str(player_id))
+                    log_error("wotb/clans/accountinfo/", "DB_ERROR", "PG_ERROR", str(e), str(player_id))
 
             conn.commit()
         except Exception as e:
             conn.rollback()
             print(f"❌ Ошибка при обработке батча: {e}")
-            log_error("wotb/account/info/", "DB_ERROR", "SQLITE_ERROR", str(e), str(batch))
+            log_error("wotb/account/info/", "DB_ERROR", "PG_ERROR", str(e), str(batch))
         finally:
-            conn.close()
+            release_db_connection(conn)
 
     return players_saved, players_skipped, members_updated
 
@@ -197,6 +177,7 @@ def main():
     print("\n" + "=" * 70)
     print(" ОБНОВЛЕНИЕ ТАБЛИЦ players И clan_members")
     print("=" * 70)
+    memory_monitor.print_memory_status()
 
     player_ids = get_all_player_ids()
     if not player_ids:
@@ -217,7 +198,6 @@ def main():
 
     with ThreadPoolExecutor(max_workers=BATCH_WORKERS) as executor:
         futures = [executor.submit(process_players_batch, batch, players_lbt) for batch in batches]
-
         for future in as_completed(futures):
             try:
                 players_saved, players_skipped, members_updated = future.result()
@@ -234,7 +214,7 @@ def main():
                     remaining_time = remaining_batches / speed_batches if speed_batches > 0 else 0
                     progress_percent = (completed_batches / total_batches) * 100
 
-                    print(f"   📊 Прогресс: {completed_batches}/{total_batches} батчей ({progress_percent:.1f}%) | "
+                    print(f"    Прогресс: {completed_batches}/{total_batches} батчей ({progress_percent:.1f}%) | "
                           f"Записано: {total_players_saved} | Пропущено: {total_players_skipped} | "
                           f"Скорость: {speed_batches:.1f} батчей/сек | "
                           f"Осталось: ~{remaining_time:.0f}с")
@@ -247,6 +227,7 @@ def main():
     print(f"   📈 Записано игроков: {total_players_saved}")
     print(f"   ⏭️ Пропущено (lbt не изменился): {total_players_skipped}")
     print(f"   📈 Обновлено связей в clan_members: {total_members_updated}")
+    memory_monitor.print_memory_status()
 
     print("\n" + "=" * 70)
     print(" СОХРАНЕНИЕ ОШИБОК")
