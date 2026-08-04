@@ -5,131 +5,108 @@ from common.logger import log_error, save_errors_to_db, export_errors_to_excel
 
 
 def calculate_tanks_stats(days: int, table_name: str):
-    """Рассчитывает агрегированную статистику танков за указанный период."""
-
     print(f"\n📊 Расчёт статистики танков за {days} дней...")
     step_start = time.time()
 
-    with db_lock:
-        conn = get_db_connection()
-        cursor = get_cursor(conn)
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    try:
+        today_int = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        period_start_int = int((datetime.now() - timedelta(days=days)).timestamp())
 
-        try:
-            # ИСПРАВЛЕНО: используем INTEGER вместо строк
-            today_int = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-            period_start_int = int((datetime.now() - timedelta(days=days)).timestamp())
+        print(f"    Шаг 1/4: Поиск последних записей за период...")
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
+        cursor.execute('''
+            CREATE TEMPORARY TABLE temp_latest_in_period AS
+            SELECT DISTINCT ON (player_id, tank_id)
+                player_id,
+                tank_id,
+                battles,
+                damage_dealt,
+                damage_received,
+                frags,
+                hits,
+                losses,
+                shots,
+                spotted,
+                survived_battles,
+                win_and_survived,
+                wins,
+                battle_life_time
+            FROM player_tanks_stats
+            WHERE last_battle_time >= %s
+            ORDER BY player_id, tank_id, collected_date DESC
+        ''', (period_start_int,))#создаём временную таблицу с данными во время 30/90-дневного периода
+        cursor.execute("SELECT COUNT(*) FROM temp_latest_in_period")
+        count_in_period = cursor.fetchone()[0]
+        cursor.execute("ANALYZE temp_latest_in_period;")
+        print(f"   ✅ Найдено {count_in_period:,} записей внутри периода")
 
-            print(f"    Шаг 1/5: Поиск последних записей за период...")
-            cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
-            cursor.execute('''
-                           CREATE TEMPORARY TABLE temp_latest_in_period AS
-                           SELECT player_id,
-                                  tank_id,
-                                  battles,
-                                  damage_dealt,
-                                  damage_received,
-                                  frags,
-                                  hits,
-                                  losses,
-                                  shots,
-                                  spotted,
-                                  survived_battles,
-                                  win_and_survived,
-                                  wins,
-                                  battle_life_time
-                           FROM (SELECT *,
-                                        ROW_NUMBER() OVER (
-                                            PARTITION BY player_id, tank_id
-                                            ORDER BY last_battle_time DESC
-                                            ) as rn
-                                 FROM player_tanks_stats
-                                 WHERE last_battle_time >= %s)
-                           WHERE rn = 1
-                           ''', (period_start_int,))
-            cursor.execute("SELECT COUNT(*) FROM temp_latest_in_period")
-            count_in_period = cursor.fetchone()[0]
-            print(f"   ✅ Найдено {count_in_period:,} записей внутри периода")
+        print(f"   ⏳ Шаг 2/4: Поиск последних записей до периода...")
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
+        cursor.execute('''
+            CREATE TEMPORARY TABLE temp_latest_before_period AS
+            SELECT DISTINCT ON (player_id, tank_id)
+                player_id,
+                tank_id,
+                battles,
+                damage_dealt,
+                damage_received,
+                frags,
+                hits,
+                losses,
+                shots,
+                spotted,
+                survived_battles,
+                win_and_survived,
+                wins,
+                battle_life_time
+            FROM player_tanks_stats
+            WHERE last_battle_time < %s
+            ORDER BY player_id, tank_id, collected_date DESC
+        ''', (period_start_int,))#создаём временную таблицу с данными до 30/90-дневного периода
+        cursor.execute("SELECT COUNT(*) FROM temp_latest_before_period")
+        count_before = cursor.fetchone()[0]
+        cursor.execute("ANALYZE temp_latest_before_period;")
+        print(f"   ✅ Найдено {count_before:,} записей до периода")
 
-            print(f"   ⏳ Шаг 2/5: Поиск последних записей до периода...")
-            cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
-            cursor.execute('''
-                           CREATE TEMPORARY TABLE temp_latest_before_period AS
-                           SELECT player_id,
-                                  tank_id,
-                                  battles,
-                                  damage_dealt,
-                                  damage_received,
-                                  frags,
-                                  hits,
-                                  losses,
-                                  shots,
-                                  spotted,
-                                  survived_battles,
-                                  win_and_survived,
-                                  wins,
-                                  battle_life_time
-                           FROM (SELECT *,
-                                        ROW_NUMBER() OVER (
-                                            PARTITION BY player_id, tank_id
-                                            ORDER BY last_battle_time DESC
-                                            ) as rn
-                                 FROM player_tanks_stats
-                                 WHERE last_battle_time < %s)
-                           WHERE rn = 1
-                           ''', (period_start_int,))
-            cursor.execute("SELECT COUNT(*) FROM temp_latest_before_period")
-            count_before = cursor.fetchone()[0]
-            print(f"   ✅ Найдено {count_before:,} записей до периода")
+        print(f"   ⏳ Шаг 3/4: Расчёт дельт...")
+        cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
+        cursor.execute('''
+            CREATE TEMPORARY TABLE temp_deltas AS
+            SELECT a.player_id,
+                   a.tank_id,
+                   a.battles - b.battles                   AS battles_delta,
+                   a.damage_dealt - b.damage_dealt         AS damage_dealt_delta,
+                   a.damage_received - b.damage_received   AS damage_received_delta,
+                   a.frags - b.frags                       AS frags_delta,
+                   a.hits - b.hits                         AS hits_delta,
+                   a.losses - b.losses                     AS losses_delta,
+                   a.shots - b.shots                       AS shots_delta,
+                   a.spotted - b.spotted                   AS spotted_delta,
+                   a.survived_battles - b.survived_battles AS survived_battles_delta,
+                   a.win_and_survived - b.win_and_survived AS win_and_survived_delta,
+                   a.wins - b.wins                         AS wins_delta,
+                   a.battle_life_time - b.battle_life_time AS battle_life_time_delta
+            FROM temp_latest_in_period a
+            INNER JOIN temp_latest_before_period b
+                ON a.player_id = b.player_id AND a.tank_id = b.tank_id
+            WHERE (a.battles - b.battles) > 0
+        ''')
+        cursor.execute("SELECT COUNT(*) FROM temp_deltas")
+        count_deltas = cursor.fetchone()[0]
+        cursor.execute("CREATE INDEX idx_temp_deltas_tank ON temp_deltas (tank_id);")
+        cursor.execute("ANALYZE temp_deltas;")
+        print(f"   ✅ Рассчитано {count_deltas:,} дельт")
 
-            print(f"   ⏳ Шаг 3/5: Фильтрация игроков с записями в обоих периодах...")
-            cursor.execute("DROP TABLE IF EXISTS temp_valid_players;")
-            cursor.execute('''
-                CREATE TEMPORARY TABLE temp_valid_players AS
-                SELECT DISTINCT a.player_id, a.tank_id FROM temp_latest_in_period a
-                INNER JOIN temp_latest_before_period b 
-                    ON a.player_id = b.player_id AND a.tank_id = b.tank_id
-            ''')
-            cursor.execute("SELECT COUNT(*) FROM temp_valid_players")
-            count_valid = cursor.fetchone()[0]
-            print(f"   ✅ Найдено {count_valid:,} пар (игрок, танк) для расчёта")
-
-            print(f"   ⏳ Шаг 4/5: Расчёт дельт...")
-            cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
-            cursor.execute('''
-                           CREATE TEMPORARY TABLE temp_deltas AS
-                           SELECT a.player_id,
-                                  a.tank_id,
-                                  a.battles - b.battles                   AS battles_delta,
-                                  a.damage_dealt - b.damage_dealt         AS damage_dealt_delta,
-                                  a.damage_received - b.damage_received   AS damage_received_delta,
-                                  a.frags - b.frags                       AS frags_delta,
-                                  a.hits - b.hits                         AS hits_delta,
-                                  a.losses - b.losses                     AS losses_delta,
-                                  a.shots - b.shots                       AS shots_delta,
-                                  a.spotted - b.spotted                   AS spotted_delta,
-                                  a.survived_battles - b.survived_battles AS survived_battles_delta,
-                                  a.win_and_survived - b.win_and_survived AS win_and_survived_delta,
-                                  a.wins - b.wins                         AS wins_delta,
-                                  a.battle_life_time - b.battle_life_time AS battle_life_time_delta
-                           FROM temp_latest_in_period a
-                                    INNER JOIN temp_latest_before_period b
-                                               ON a.player_id = b.player_id AND a.tank_id = b.tank_id
-                                    INNER JOIN temp_valid_players v
-                                               ON a.player_id = v.player_id AND a.tank_id = v.tank_id
-                           WHERE (a.battles - b.battles) > 0
-                           ''')
-            cursor.execute("SELECT COUNT(*) FROM temp_deltas")
-            count_deltas = cursor.fetchone()[0]
-            print(f"   ✅ Рассчитано {count_deltas:,} дельт")
-
-            print(f"   ⏳ Шаг 5/5: Агрегация и сохранение...")
-            cursor.execute(f'''
+        print(f"   ⏳ Шаг 4/4: Агрегация и сохранение...")
+        cursor.execute(f'''
                 INSERT INTO {table_name} (tank_id, calculated_date, players_count, battles, damage_dealt,
                                          damage_received, frags, hits, losses, shots, spotted, survived_battles,
                                          win_and_survived, wins, battle_life_time)
                 SELECT tank_id,
                        %s                          AS calculated_date,
-                       COUNT(DISTINCT player_id)   AS players_count,
+                       COUNT(*)                    AS players_count,
                        SUM(battles_delta)          AS battles,
                        SUM(damage_dealt_delta)     AS damage_dealt,
                        SUM(damage_received_delta)  AS damage_received,
@@ -159,34 +136,33 @@ def calculate_tanks_stats(days: int, table_name: str):
                                                                      battle_life_time = EXCLUDED.battle_life_time
             ''', (today_int,))
 
-            rows_affected = cursor.rowcount
-            print(f"    Обновлено/вставлено записей: {rows_affected}")
+        rows_affected = cursor.rowcount
+        print(f"    Обновлено/вставлено записей: {rows_affected}")
 
-            # Очищаем временные таблицы
-            cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
-            cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
-            cursor.execute("DROP TABLE IF EXISTS temp_valid_players;")
-            cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
+        # Очищаем временные таблицы
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
+        cursor.execute("DROP TABLE IF EXISTS temp_valid_players;")
+        cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
 
-            conn.commit()
+        conn.commit()
 
-            step_elapsed = time.time() - step_start
-            print(f"✅ Статистика за {days} дней рассчитана за {step_elapsed:.1f} сек:")
-            print(f"   Обновлено записей в {table_name}: {rows_affected}")
+        step_elapsed = time.time() - step_start
+        print(f"✅ Статистика за {days} дней рассчитана за {step_elapsed:.1f} сек:")
+        print(f"   Обновлено записей в {table_name}: {rows_affected}")
 
-        except Exception as e:
-            conn.rollback()
-            print(f"❌ Ошибка расчёта статистики за {days} дней: {e}")
-            log_error(table_name, "DB_ERROR", "PG_ERROR", str(e), f"calculate_{days}d")
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Ошибка расчёта статистики за {days} дней: {e}")
+        log_error(table_name, "DB_ERROR", "PG_ERROR", str(e), f"calculate_{days}d")
 
-            for temp_table in ['temp_latest_in_period', 'temp_latest_before_period', 'temp_valid_players',
-                               'temp_deltas']:
-                try:
-                    cursor.execute(f"DROP TABLE IF EXISTS {temp_table};")
-                except:
-                    pass
-        finally:
-            release_db_connection(conn)
+        for temp_table in ['temp_latest_in_period', 'temp_latest_before_period', 'temp_valid_players', 'temp_deltas']:
+            try:
+                cursor.execute(f"DROP TABLE IF EXISTS {temp_table};")
+            except:
+                pass
+    finally:
+        release_db_connection(conn)
 
 
 def main():
@@ -200,7 +176,6 @@ def main():
 
     elapsed = time.time() - start_time
     print(f"\n✅ Расчёт статистики завершён за {elapsed:.1f} сек ({elapsed / 60:.1f} мин)")
-
     print("\n" + "=" * 70)
     print("💾 СОХРАНЕНИЕ ЛОГА ОШИБОК")
     print("=" * 70)

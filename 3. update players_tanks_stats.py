@@ -282,8 +282,8 @@ def main():
                     print(f"   ❌ Критическая ошибка при обработке игрока {player_id}: {e}")
                     log_error("wotb/tanks/stats/", "EXCEPTION", "THREAD_ERROR", str(e), str(player_id))
 
-        del tanks_lbt
-        gc.collect()
+        del tanks_lbt#удаляет значения в списке tanks_lbt, но не сам список
+        gc.collect()#очищает память, занимаемую списком tanks_lbt
 
     if buffer:
         saved = save_tanks_stats_batch(buffer)
