@@ -2,7 +2,7 @@ import pandas as pd
 import threading
 from datetime import datetime
 from common.config import ERRORS_FILE
-from common.db import get_db_connection, release_db_connection, db_lock
+from common.db import get_db_connection, release_db_connection, db_lock, get_cursor
 
 error_log = []
 error_log_lock = threading.Lock()
@@ -21,7 +21,7 @@ def log_error(endpoint, error_field, error_code, error_message, ids):
     """
     with error_log_lock:
         error_log.append({
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'timestamp': int(datetime.now().timestamp()),
             'endpoint': endpoint,
             'error_field': str(error_field),
             'error_code': str(error_code),
@@ -52,9 +52,8 @@ def save_errors_to_db():
 
         with db_lock:
             conn = get_db_connection()
-            cursor = conn.cursor()
+            cursor = get_cursor(conn)
             try:
-                # Изменён синтаксис плейсхолдеров: :name → %(name)s
                 cursor.executemany('''
                     INSERT INTO error_log (timestamp, endpoint, error_field, error_code, error_message, ids)
                     VALUES (%(timestamp)s, %(endpoint)s, %(error_field)s, %(error_code)s, %(error_message)s, %(ids)s)

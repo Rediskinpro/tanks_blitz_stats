@@ -1,7 +1,5 @@
 import psutil
 import threading
-import time
-from datetime import datetime
 
 
 class MemoryMonitor:
@@ -77,4 +75,4 @@ class MemoryMonitor:
 
 
 # Глобальный монитор (можно использовать в любом скрипте)
-memory_monitor = MemoryMonitor(threshold_mb=3500, check_interval=30)
+memory_monitor = MemoryMonitor(threshold_mb=3500, check_interval=5)

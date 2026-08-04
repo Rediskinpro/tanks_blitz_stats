@@ -1,227 +1,258 @@
-import sqlite3
-import os
+"""
+Скрипт для сбора информации о структуре и размерах БД PostgreSQL.
+Аналог check_db.py для SQLite, но адаптирован под PostgreSQL.
+"""
+import psycopg2
+import psycopg2.extras
 from datetime import datetime
-from common.db import DB_FILE
+from common.config import DB_CONFIG
 
 
-def get_db_size_info():
-    """Получает информацию о размере БД"""
-    conn = sqlite3.connect(DB_FILE)
-
-    # Размер файла на диске
-    file_size = os.path.getsize(DB_FILE)
-
-    # Информация о страницах
-    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-    page_count = conn.execute("PRAGMA page_count").fetchone()[0]
-    freelist_count = conn.execute("PRAGMA freelist_count").fetchone()[0]
-
-    # Расчёт
-    total_size = page_count * page_size
-    used_size = (page_count - freelist_count) * page_size
-    free_size = freelist_count * page_size
-
-    conn.close()
-
-    return {
-        'file_size_mb': file_size / 1024 / 1024,
-        'total_size_mb': total_size / 1024 / 1024,
-        'used_size_mb': used_size / 1024 / 1024,
-        'free_size_mb': free_size / 1024 / 1024,
-        'free_percent': (free_size / total_size * 100) if total_size > 0 else 0,
-        'page_size': page_size,
-        'page_count': page_count,
-        'freelist_count': freelist_count
-    }
+def get_connection():
+    """Подключение к PostgreSQL"""
+    return psycopg2.connect(**DB_CONFIG)
 
 
-def get_tables_info():
+def get_db_size(conn):
+    """Получает общий размер БД"""
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT pg_size_pretty(pg_database_size(current_database())) AS size")
+    return cursor.fetchone()['size']
+
+
+def get_tables_info(conn):
     """Получает информацию о всех таблицах"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    # Получаем список всех таблиц
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
-                   SELECT name, sql
-                   FROM sqlite_master
-                   WHERE type = 'table'
-                     AND name NOT LIKE 'sqlite_%'
-                   ORDER BY name
+                   SELECT schemaname || '.' || relname                                         AS table_name,
+                          n_live_tup                                                           AS row_count,
+                          pg_size_pretty(pg_total_relation_size(schemaname || '.' || relname)) AS total_size,
+                          pg_size_pretty(pg_relation_size(schemaname || '.' || relname))       AS data_size,
+                          pg_size_pretty(pg_total_relation_size(schemaname || '.' || relname) -
+                                         pg_relation_size(schemaname || '.' || relname))       AS index_size,
+                          n_dead_tup                                                           AS dead_rows,
+                          last_vacuum,
+                          last_autovacuum,
+                          last_analyze,
+                          last_autoanalyze
+                   FROM pg_stat_user_tables
+                   WHERE schemaname = 'public'
+                   ORDER BY pg_total_relation_size(schemaname || '.' || relname) DESC
                    """)
+    return cursor.fetchall()
 
-    tables = []
-    for table_name, table_sql in cursor.fetchall():
-        # Количество записей
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        count = cursor.fetchone()[0]
 
-        # Примерная оценка размера (через длину данных)
-        cursor.execute(f"""
-            SELECT SUM(LENGTH(CAST(rowid AS TEXT)) + 
-                   {' + '.join([f"LENGTH(COALESCE(CAST({col} AS TEXT), ''))"
-                                for col in get_table_columns(conn, table_name)])}) as size
-            FROM {table_name}
-        """)
-        size_bytes = cursor.fetchone()[0] or 0
+def get_indexes_info(conn):
+    """Получает информацию об индексах"""
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+        SELECT 
+            schemaname || '.' || relname AS table_name,
+            indexrelname AS index_name,
+            pg_size_pretty(pg_relation_size(indexrelid)) AS size,
+            idx_scan AS times_used,
+            idx_tup_read AS tuples_read,
+            idx_tup_fetch AS tuples_fetched
+        FROM pg_stat_user_indexes
+        WHERE schemaname = 'public'
+        ORDER BY pg_relation_size(indexrelid) DESC
+    """)
+    return cursor.fetchall()
 
-        tables.append({
-            'name': table_name,
-            'count': count,
-            'size_mb': size_bytes / 1024 / 1024,
-            'structure': table_sql
-        })
 
-    conn.close()
-    return tables
+def get_bloat_info(conn):
+    """Получает информацию о bloat (разрастании) таблиц"""
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+                   SELECT schemaname || '.' || relname                                   AS table_name,
+                          n_live_tup                                                     AS live_rows,
+                          n_dead_tup                                                     AS dead_rows,
+                          CASE
+                              WHEN n_live_tup > 0
+                                  THEN round(n_dead_tup::numeric / (n_live_tup + n_dead_tup) * 100, 2)
+                              ELSE 0
+                              END                                                        AS dead_percent,
+                          pg_size_pretty(pg_relation_size(schemaname || '.' || relname)) AS table_size
+                   FROM pg_stat_user_tables
+                   WHERE schemaname = 'public'
+                     AND n_dead_tup > 0
+                   ORDER BY n_dead_tup DESC
+                   """)
+    return cursor.fetchall()
+
+
+def get_unused_indexes(conn):
+    """Находит индексы, которые не используются"""
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+        SELECT 
+            schemaname || '.' || relname AS table_name,
+            indexrelname AS index_name,
+            pg_size_pretty(pg_relation_size(indexrelid)) AS size,
+            idx_scan AS times_used
+        FROM pg_stat_user_indexes
+        WHERE schemaname = 'public'
+          AND idx_scan = 0
+          AND indexrelname NOT LIKE '%pkey%'
+        ORDER BY pg_relation_size(indexrelid) DESC
+    """)
+    return cursor.fetchall()
 
 
 def get_table_columns(conn, table_name):
-    """Получает список колонок таблицы"""
-    cursor = conn.cursor()
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    return [row[1] for row in cursor.fetchall()]
+    """Получает информацию о колонках таблицы"""
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+                   SELECT column_name,
+                          data_type,
+                          character_maximum_length,
+                          is_nullable,
+                          column_default
+                   FROM information_schema.columns
+                   WHERE table_schema = 'public'
+                     AND table_name = %s
+                   ORDER BY ordinal_position
+                   """, (table_name,))
+    return cursor.fetchall()
 
 
-def check_duplicates():
-    """Проверяет дубликаты в таблицах"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    duplicates = {}
-
-    # Проверка player_tanks_stats по (player_id, tank_id, last_battle_time)
-    try:
-        cursor.execute("""
-                       SELECT COUNT(*)                                                                          as total,
-                              COUNT(*) -
-                              COUNT(DISTINCT player_id || '-' || tank_id || '-' || last_battle_time)            as duplicates
-                       FROM player_tanks_stats
-                       """)
-        result = cursor.fetchone()
-        duplicates['player_tanks_stats'] = {
-            'total': result[0],
-            'duplicates': result[1],
-            'fields': 'player_id, tank_id, last_battle_time'
-        }
-    except Exception as e:
-        duplicates['player_tanks_stats'] = {'error': str(e)}
-
-    # Проверка players по (player_id, last_battle_time)
-    try:
-        cursor.execute("""
-                       SELECT COUNT(*)                                                        as total,
-                              COUNT(*) - COUNT(DISTINCT player_id || '-' || last_battle_time) as duplicates
-                       FROM players
-                       """)
-        result = cursor.fetchone()
-        duplicates['players'] = {
-            'total': result[0],
-            'duplicates': result[1],
-            'fields': 'player_id, last_battle_time'
-        }
-    except Exception as e:
-        duplicates['players'] = {'error': str(e)}
-
-    conn.close()
-    return duplicates
+def get_primary_keys(conn):
+    """Получает информацию о первичных ключах"""
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+                   SELECT tc.table_name,
+                          kcu.column_name,
+                          kcu.ordinal_position
+                   FROM information_schema.table_constraints tc
+                            JOIN information_schema.key_column_usage kcu
+                                 ON tc.constraint_name = kcu.constraint_name
+                                     AND tc.table_schema = kcu.table_schema
+                   WHERE tc.constraint_type = 'PRIMARY KEY'
+                     AND tc.table_schema = 'public'
+                   ORDER BY tc.table_name, kcu.ordinal_position
+                   """)
+    return cursor.fetchall()
 
 
 def print_report():
     """Выводит полный отчёт о состоянии БД"""
     print("\n" + "=" * 80)
-    print(f" ОТЧЁТ О СОСТОЯНИИ БАЗЫ ДАННЫХ")
-    print(f" Файл: {DB_FILE}")
+    print(f" ОТЧЁТ О СОСТОЯНИИ БАЗЫ ДАННЫХ POSTGRESQL")
     print(f" Дата проверки: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80)
 
-    # 1. Информация о размере БД
-    print("\n📊 ИНФОРМАЦИЯ О РАЗМЕРЕ БД:")
-    print("-" * 80)
-    size_info = get_db_size_info()
-    print(f"  Размер файла на диске:     {size_info['file_size_mb']:>10.2f} MB")
-    print(f"  Общий размер (страницы):   {size_info['total_size_mb']:>10.2f} MB")
-    print(f"  Использовано данных:       {size_info['used_size_mb']:>10.2f} MB")
-    print(f"  Свободно (пустые страницы): {size_info['free_size_mb']:>10.2f} MB ({size_info['free_percent']:.1f}%)")
-    print(f"  Размер страницы:           {size_info['page_size']:>10} bytes")
-    print(f"  Всего страниц:             {size_info['page_count']:>10}")
-    print(f"  Пустых страниц:            {size_info['freelist_count']:>10}")
+    conn = get_connection()
 
-    if size_info['free_percent'] > 10:
-        print(f"\n  ⚠️  ВНИМАНИЕ: {size_info['free_percent']:.1f}% БД - пустые страницы!")
-        print(f"  💡 Рекомендуется выполнить: VACUUM;")
+    try:
+        # 1. Общий размер БД
+        print("\n📊 ОБЩИЙ РАЗМЕР БД:")
+        print("-" * 80)
+        db_size = get_db_size(conn)
+        print(f"  Размер базы данных: {db_size}")
 
-    # 2. Информация о таблицах
-    print("\n\n📋 ИНФОРМАЦИЯ О ТАБЛИЦАХ:")
-    print("-" * 80)
-    tables = get_tables_info()
+        # 2. Информация о таблицах
+        print("\n\n📋 ИНФОРМАЦИЯ О ТАБЛИЦАХ:")
+        print("-" * 80)
+        tables = get_tables_info(conn)
 
-    print(f"{'Название таблицы':<30} {'Записей':>12} {'Размер (MB)':>12}")
-    print("-" * 80)
+        print(f"{'Таблица':<30} {'Записей':>12} {'Всего':>10} {'Данные':>10} {'Индексы':>10}")
+        print("-" * 80)
 
-    total_records = 0
-    total_size = 0
+        total_rows = 0
+        for table in tables:
+            print(f"{table['table_name']:<30} {table['row_count']:>12,} "
+                  f"{table['total_size']:>10} {table['data_size']:>10} {table['index_size']:>10}")
+            total_rows += table['row_count']
 
-    for table in sorted(tables, key=lambda x: x['count'], reverse=True):
-        print(f"{table['name']:<30} {table['count']:>12,} {table['size_mb']:>12.2f}")
-        total_records += table['count']
-        total_size += table['size_mb']
+        print("-" * 80)
+        print(f"{'ИТОГО':<30} {total_rows:>12,}")
 
-    print("-" * 80)
-    print(f"{'ИТОГО':<30} {total_records:>12,} {total_size:>12.2f}")
+        # 3. Информация об индексах
+        print("\n\n🔍 ИНФОРМАЦИЯ ОБ ИНДЕКСАХ:")
+        print("-" * 80)
+        indexes = get_indexes_info(conn)
 
-    # 3. Структура таблиц
-    print("\n\n🏗️  СТРУКТУРА ТАБЛИЦ:")
-    print("-" * 80)
+        print(f"{'Таблица':<30} {'Индекс':<35} {'Размер':>10} {'Исп.':>8} {'Прочитано':>12}")
+        print("-" * 80)
 
-    for table in tables:
-        print(f"\n📌 {table['name']} ({table['count']:,} записей):")
-        # Форматируем SQL для читаемости
-        structure = table['structure'].replace(',', ',\n  ')
-        print(f"  {structure}")
+        for idx in indexes:
+            print(f"{idx['table_name']:<30} {idx['index_name']:<35} "
+                  f"{idx['size']:>10} {idx['times_used']:>8} {idx['tuples_read']:>12}")
 
-    # 4. Проверка дубликатов
-    print("\n\n🔍 ПРОВЕРКА ДУБЛИКАТОВ:")
-    print("-" * 80)
-    duplicates = check_duplicates()
+        # 4. Неиспользуемые индексы
+        print("\n\n⚠️  НЕИСПОЛЬЗУЕМЫЕ ИНДЕКСЫ (idx_scan = 0):")
+        print("-" * 80)
+        unused_indexes = get_unused_indexes(conn)
 
-    for table_name, info in duplicates.items():
-        print(f"\n📌 {table_name}:")
-        if 'error' in info:
-            print(f"  ❌ Ошибка: {info['error']}")
+        if unused_indexes:
+            print(f"{'Таблица':<30} {'Индекс':<35} {'Размер':>10}")
+            print("-" * 80)
+            total_unused_size = 0
+            for idx in unused_indexes:
+                print(f"{idx['table_name']:<30} {idx['index_name']:<35} {idx['size']:>10}")
+            print("-" * 80)
+            print(f"  💡 Рекомендуется удалить эти индексы для освобождения места")
         else:
-            print(f"  Всего записей: {info['total']:,}")
-            print(f"  Дубликатов по ({info['fields']}): {info['duplicates']:,}")
+            print("  ✅ Все индексы используются")
 
-            if info['duplicates'] > 0:
-                percent = (info['duplicates'] / info['total'] * 100) if info['total'] > 0 else 0
-                print(f"  ⚠️  Процент дубликатов: {percent:.2f}%")
-                print(f"  💡 Рекомендуется очистить дубликаты")
-            else:
-                print(f"  ✅ Дубликатов не обнаружено")
+        # 5. Bloat (разрастание таблиц)
+        print("\n\n🗑️  РАЗРАСТАНИЕ ТАБЛИЦ (BLOAT):")
+        print("-" * 80)
+        bloat_info = get_bloat_info(conn)
 
-    # 5. Рекомендации
-    print("\n\n💡 РЕКОМЕНДАЦИИ:")
-    print("-" * 80)
+        if bloat_info:
+            print(f"{'Таблица':<30} {'Живых':>12} {'Мёртвых':>12} {'% мёртвых':>12} {'Размер':>10}")
+            print("-" * 80)
+            for table in bloat_info:
+                print(f"{table['table_name']:<30} {table['live_rows']:>12,} "
+                      f"{table['dead_rows']:>12,} {table['dead_percent']:>11.2f}% "
+                      f"{table['table_size']:>10}")
+            print("-" * 80)
+            print(f"  💡 Выполните VACUUM для освобождения места от мёртвых строк")
+        else:
+            print("  ✅ Разрастание не обнаружено")
 
-    recommendations = []
+        # 6. Первичные ключи
+        print("\n\n ПЕРВИЧНЫЕ КЛЮЧИ:")
+        print("-" * 80)
+        primary_keys = get_primary_keys(conn)
 
-    if size_info['free_percent'] > 10:
-        recommendations.append("Выполнить VACUUM для освобождения пустых страниц")
+        current_table = None
+        for pk in primary_keys:
+            if pk['table_name'] != current_table:
+                current_table = pk['table_name']
+                print(f"\n📌 {current_table}:")
+            print(f"  - {pk['column_name']} (позиция {pk['ordinal_position']})")
 
-    for table_name, info in duplicates.items():
-        if 'error' not in info and info['duplicates'] > 0:
-            recommendations.append(f"Очистить дубликаты в таблице {table_name}")
+        # 7. Рекомендации
+        print("\n\n💡 РЕКОМЕНДАЦИИ:")
+        print("-" * 80)
+        recommendations = []
 
-    if total_size > 10000:  # больше 10 GB
-        recommendations.append("Рассмотреть архивацию старых данных")
+        if unused_indexes:
+            recommendations.append(f"Удалить {len(unused_indexes)} неиспользуемых индексов")
 
-    if recommendations:
-        for i, rec in enumerate(recommendations, 1):
-            print(f"  {i}. {rec}")
-    else:
-        print("  ✅ Состояние БД в норме")
+        if bloat_info:
+            high_bloat = [t for t in bloat_info if float(t['dead_percent']) > 10]
+            if high_bloat:
+                recommendations.append(f"Выполнить VACUUM для {len(high_bloat)} таблиц с высоким bloat")
 
-    print("\n" + "=" * 80)
+        tables_needing_vacuum = [t for t in tables if t['last_vacuum'] is None and t['row_count'] > 1000]
+        if tables_needing_vacuum:
+            recommendations.append(f"Выполнить VACUUM ANALYZE для {len(tables_needing_vacuum)} таблиц")
+
+        if recommendations:
+            for i, rec in enumerate(recommendations, 1):
+                print(f"  {i}. {rec}")
+        else:
+            print("  ✅ Состояние БД в норме")
+
+        print("\n" + "=" * 80)
+
+    except Exception as e:
+        print(f"\n❌ Ошибка: {e}")
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import sys
 import time
 from datetime import datetime
 from common.memory_monitor import memory_monitor
-from common.db import close_all_connections
+from common.db import close_all_connections, get_db_connection, get_cursor, release_db_connection
 
 SCRIPTS = [
     "1. update clans.py",
@@ -13,6 +13,18 @@ SCRIPTS = [
 
 def main():
     start_time = time.time()
+    today_int = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    try:
+        cursor.execute('''
+            INSERT INTO date_reference (date_int, date_readable)
+            VALUES (%s, TO_TIMESTAMP(%s)::DATE)
+            ON CONFLICT (date_int) DO NOTHING
+        ''', (today_int, today_int))
+        conn.commit()
+    finally:
+        release_db_connection(conn)
     print("\n" + "=" * 70)
     print(" ПОЛНЫЙ ЦИКЛ ОБНОВЛЕНИЯ ДАННЫХ")
     print(f" Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
