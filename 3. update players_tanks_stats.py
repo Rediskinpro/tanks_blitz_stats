@@ -239,10 +239,10 @@ def main():
     processed_players = 0
     buffer = []
     stats = {'success': 0, 'errors': 0}
-    BATCH_SIZE = 5000
+    batch_size = 5000
     start_time = time.time()
 
-    for batch_ids, tanks_lbt in get_tanks_last_battle_times_batched(player_ids, BATCH_SIZE):#get_tanks_last_battle_times_batched работает как генератор, цикл выполняется пока генератор не закончит генерировать
+    for batch_ids, tanks_lbt in get_tanks_last_battle_times_batched(player_ids, batch_size):#get_tanks_last_battle_times_batched работает как генератор, цикл выполняется пока генератор не закончит генерировать
         print(f"\n📦 Обработка батча из {len(batch_ids)} игроков...")
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

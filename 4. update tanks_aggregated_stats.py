@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timedelta
-from common.db import get_db_connection, get_cursor, release_db_connection, db_lock
+from common.db import get_db_connection, get_cursor, release_db_connection
 from common.logger import log_error, save_errors_to_db, export_errors_to_excel
 
 
@@ -139,12 +139,6 @@ def calculate_tanks_stats(days: int, table_name: str):
         rows_affected = cursor.rowcount
         print(f"    Обновлено/вставлено записей: {rows_affected}")
 
-        # Очищаем временные таблицы
-        cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
-        cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
-        cursor.execute("DROP TABLE IF EXISTS temp_valid_players;")
-        cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
-
         conn.commit()
 
         step_elapsed = time.time() - step_start
@@ -156,12 +150,11 @@ def calculate_tanks_stats(days: int, table_name: str):
         print(f"❌ Ошибка расчёта статистики за {days} дней: {e}")
         log_error(table_name, "DB_ERROR", "PG_ERROR", str(e), f"calculate_{days}d")
 
-        for temp_table in ['temp_latest_in_period', 'temp_latest_before_period', 'temp_valid_players', 'temp_deltas']:
-            try:
-                cursor.execute(f"DROP TABLE IF EXISTS {temp_table};")
-            except:
-                pass
     finally:
+        # Очищаем временные таблицы
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
+        cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
         release_db_connection(conn)
 
 
