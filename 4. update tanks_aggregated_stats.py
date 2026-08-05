@@ -12,7 +12,7 @@ def calculate_tanks_stats(days: int, table_name: str):
     cursor = get_cursor(conn)
     try:
         today_int = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-        period_start_int = int((datetime.now() - timedelta(days=days)).timestamp())
+        period_start_int = int((datetime.now() - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
         print(f"    Шаг 1/4: Поиск последних записей за период...")
         cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
@@ -37,9 +37,9 @@ def calculate_tanks_stats(days: int, table_name: str):
             WHERE last_battle_time >= %s
             ORDER BY player_id, tank_id, collected_date DESC
         ''', (period_start_int,))#создаём временную таблицу с данными во время 30/90-дневного периода
+        cursor.execute("ANALYZE temp_latest_in_period;")
         cursor.execute("SELECT COUNT(*) FROM temp_latest_in_period")
         count_in_period = cursor.fetchone()[0]
-        cursor.execute("ANALYZE temp_latest_in_period;")
         print(f"   ✅ Найдено {count_in_period:,} записей внутри периода")
 
         print(f"   ⏳ Шаг 2/4: Поиск последних записей до периода...")
@@ -65,9 +65,9 @@ def calculate_tanks_stats(days: int, table_name: str):
             WHERE last_battle_time < %s
             ORDER BY player_id, tank_id, collected_date DESC
         ''', (period_start_int,))#создаём временную таблицу с данными до 30/90-дневного периода
+        cursor.execute("ANALYZE temp_latest_before_period;")
         cursor.execute("SELECT COUNT(*) FROM temp_latest_before_period")
         count_before = cursor.fetchone()[0]
-        cursor.execute("ANALYZE temp_latest_before_period;")
         print(f"   ✅ Найдено {count_before:,} записей до периода")
 
         print(f"   ⏳ Шаг 3/4: Расчёт дельт...")
@@ -93,10 +93,10 @@ def calculate_tanks_stats(days: int, table_name: str):
                 ON a.player_id = b.player_id AND a.tank_id = b.tank_id
             WHERE (a.battles - b.battles) > 0
         ''')
+        cursor.execute("ANALYZE temp_deltas;")
+        cursor.execute("CREATE INDEX idx_temp_deltas_tank ON temp_deltas (tank_id);")
         cursor.execute("SELECT COUNT(*) FROM temp_deltas")
         count_deltas = cursor.fetchone()[0]
-        cursor.execute("CREATE INDEX idx_temp_deltas_tank ON temp_deltas (tank_id);")
-        cursor.execute("ANALYZE temp_deltas;")
         print(f"   ✅ Рассчитано {count_deltas:,} дельт")
 
         print(f"   ⏳ Шаг 4/4: Агрегация и сохранение...")

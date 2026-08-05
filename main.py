@@ -9,7 +9,8 @@ SCRIPTS = [
     "1. update clans.py",
     "2. update players.py",
     "3. update players_tanks_stats.py",
-    "4. update tanks_aggregated_stats.py",]
+    "4. update tanks_aggregated_stats.py",
+    "5. DB analyze.py"]
 
 def main():
     start_time = time.time()
