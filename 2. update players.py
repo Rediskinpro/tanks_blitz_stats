@@ -257,7 +257,7 @@ def main():
     memory_monitor.stop()
     memory_monitor.print_memory_status()
     elapsed = time.time() - start_time
-    print(f"\n✅ Обновление таблиц players и clan_members завершено за {elapsed:.2f} сек.")
+    print(f"\n✅ Обновление таблиц players и clan_members завершено за {elapsed:.2f} сек ({elapsed / 3600:.1f} ч)")
     print(f"   📈 Записано игроков: {total_players_saved}")
     print(f"   ⏭️ Пропущено (lbt не изменился): {total_players_skipped}")
     print(f"   📈 Обновлено связей в clan_members: {total_members_updated}")

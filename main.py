@@ -10,7 +10,8 @@ SCRIPTS = [
     "2. update players.py",
     "3. update players_tanks_stats.py",
     "4. DB analyze.py",
-    "5. update tanks_aggregated_stats.py"
+    "5. update tanks_aggregated_stats.py",
+    "6. update players_aggregated_stats.py"
     ]
 
 def main():
@@ -58,7 +59,7 @@ def main():
     print(f"\n{'=' * 70}")
     print(" ✅ ПОЛНЫЙ ЦИКЛ ЗАВЕРШЁН!")
     print(f"{'=' * 70}")
-    print(f"⏱️  Общее время: {elapsed:.0f} сек ({elapsed / 60:.1f} мин)")
+    print(f"⏱️  Общее время: {elapsed:.0f} сек ({elapsed / 3600:.1f} ч)")
 
 
 if __name__ == "__main__":

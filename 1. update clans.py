@@ -147,8 +147,8 @@ def main():
     print("=" * 70)
     print(f"✅ Успешно обработано кланов: {total_processed}")
     print(f"❌ Ошибок при обработке: {total_errors}")
-    print(f"⏱️ Время в функциях обработки: {total_time_in_batches:.2f} сек")
-    print(f"⏱️ Общее время скрипта: {time.time() - start_time:.2f} сек")
+    print(f"⏱️ Время в функциях обработки: {total_time_in_batches:.2f} сек ({total_time_in_batches / 3600:.1f} ч)")
+    print(f"⏱️ Общее время скрипта: {time.time() - start_time:.2f} сек ({(time.time() - start_time) / 3600:.1f} ч)")
 
     if total_errors > 0:
         error_rate = (total_errors / (total_processed + total_errors)) * 100
@@ -162,7 +162,7 @@ def main():
     memory_monitor.stop()  # начинаем постоянный мониторинг памяти
     memory_monitor.print_memory_status()
     elapsed = time.time() - start_time #рассчитываем общее время выполнения
-    print(f"\n✅ Обновление таблиц clans и clan_members завершено за {elapsed:.2f} сек.")
+    print(f"\n✅ Обновление таблиц clans и clan_members завершено за {elapsed:.2f} сек ({elapsed / 3600:.1f} ч)")
 
 
 if __name__ == "__main__":

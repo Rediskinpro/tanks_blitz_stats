@@ -1,7 +1,3 @@
-"""
-Скрипт для сбора полной информации о структуре БД PostgreSQL.
-Сохраняет результат в xlsx файл.
-"""
 import psycopg2
 import psycopg2.extras
 import pandas as pd
@@ -11,18 +7,14 @@ from common.config import DB_CONFIG
 
 
 def get_db_info(conn):
-    """Получает общую информацию о БД"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-    # Размер БД
     cursor.execute("SELECT pg_size_pretty(pg_database_size(current_database())) AS db_size")
     db_size = cursor.fetchone()['db_size']
 
-    # Версия PostgreSQL
     cursor.execute("SELECT version()")
     pg_version = cursor.fetchone()[0]
 
-    # Количество таблиц
     cursor.execute("""
                    SELECT COUNT(*) AS table_count
                    FROM information_schema.tables
@@ -31,7 +23,6 @@ def get_db_info(conn):
                    """)
     table_count = cursor.fetchone()['table_count']
 
-    # Количество индексов
     cursor.execute("""
                    SELECT COUNT(*) AS index_count
                    FROM pg_indexes
@@ -39,7 +30,6 @@ def get_db_info(conn):
                    """)
     index_count = cursor.fetchone()['index_count']
 
-    # Общий размер всех таблиц
     cursor.execute("""
                    SELECT pg_size_pretty(SUM(pg_total_relation_size(schemaname || '.' || relname))) AS total_size
                    FROM pg_stat_user_tables
@@ -68,7 +58,6 @@ def get_db_info(conn):
 
 
 def get_tables(conn):
-    """Получает список всех таблиц с количеством записей"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
     cursor.execute("""
@@ -97,7 +86,6 @@ def get_tables(conn):
 
 
 def get_columns(conn):
-    """Получает информацию о всех колонках"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
     cursor.execute("""
@@ -115,7 +103,6 @@ def get_columns(conn):
 
     columns = []
     for row in cursor.fetchall():
-        # Формируем полный тип данных
         data_type = row['data_type']
         if row['character_maximum_length']:
             data_type = f"{data_type}({row['character_maximum_length']})"
@@ -133,7 +120,6 @@ def get_columns(conn):
 
 
 def get_primary_keys(conn):
-    """Получает информацию о первичных ключах"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
     cursor.execute("""
@@ -161,7 +147,6 @@ def get_primary_keys(conn):
 
 
 def get_indexes(conn):
-    """Получает информацию об индексах"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
     cursor.execute("""
@@ -186,7 +171,6 @@ def get_indexes(conn):
 
 
 def get_foreign_keys(conn):
-    """Получает информацию о внешних ключах (если есть)"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
     cursor.execute("""
@@ -219,17 +203,14 @@ def get_foreign_keys(conn):
 
 
 def save_to_excel(output_file):
-    """Сохраняет всю информацию в xlsx файл"""
     print("=" * 70)
     print(" СБОР ИНФОРМАЦИИ О СТРУКТУРЕ БД")
     print("=" * 70)
 
-    # Подключение к БД
     print(f"\n🔌 Подключение к PostgreSQL...")
     conn = psycopg2.connect(**DB_CONFIG)
 
     try:
-        # Собираем данные
         print("📋 Сбор информации о БД...")
         db_info = get_db_info(conn)
 
@@ -253,36 +234,28 @@ def save_to_excel(output_file):
         foreign_keys = get_foreign_keys(conn)
         print(f"   ✅ Найдено {len(foreign_keys)} внешних ключей")
 
-        # Сохраняем в xlsx
         print(f"\n💾 Сохранение в {output_file}...")
 
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            # Лист 1: Общая информация
             df_db_info = pd.DataFrame(db_info)
             df_db_info.to_excel(writer, sheet_name='DB_Info', index=False)
 
-            # Лист 2: Таблицы
             df_tables = pd.DataFrame(tables)
             df_tables.to_excel(writer, sheet_name='Tables', index=False)
 
-            # Лист 3: Колонки
             df_columns = pd.DataFrame(columns)
             df_columns.to_excel(writer, sheet_name='Columns', index=False)
 
-            # Лист 4: Первичные ключи
             df_pk = pd.DataFrame(primary_keys)
             df_pk.to_excel(writer, sheet_name='Primary_Keys', index=False)
 
-            # Лист 5: Индексы
             df_indexes = pd.DataFrame(indexes)
             df_indexes.to_excel(writer, sheet_name='Indexes', index=False)
 
-            # Лист 6: Внешние ключи
             if foreign_keys:
                 df_fk = pd.DataFrame(foreign_keys)
                 df_fk.to_excel(writer, sheet_name='Foreign_Keys', index=False)
 
-            # Автоподбор ширины колонок
             for sheet_name in writer.sheets:
                 worksheet = writer.sheets[sheet_name]
                 for column in worksheet.columns:

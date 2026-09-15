@@ -1,7 +1,4 @@
-"""
-Скрипт для сбора информации о структуре и размерах БД PostgreSQL.
-Аналог check_db.py для SQLite, но адаптирован под PostgreSQL.
-"""
+
 import psycopg2
 import psycopg2.extras
 from datetime import datetime
@@ -9,19 +6,16 @@ from common.config import DB_CONFIG
 
 
 def get_connection():
-    """Подключение к PostgreSQL"""
     return psycopg2.connect(**DB_CONFIG)
 
 
 def get_db_size(conn):
-    """Получает общий размер БД"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("SELECT pg_size_pretty(pg_database_size(current_database())) AS size")
     return cursor.fetchone()['size']
 
 
 def get_tables_info(conn):
-    """Получает информацию о всех таблицах"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
                    SELECT schemaname || '.' || relname                                         AS table_name,
@@ -43,7 +37,6 @@ def get_tables_info(conn):
 
 
 def get_indexes_info(conn):
-    """Получает информацию об индексах"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
         SELECT 
@@ -61,7 +54,6 @@ def get_indexes_info(conn):
 
 
 def get_bloat_info(conn):
-    """Получает информацию о bloat (разрастании) таблиц"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
                    SELECT schemaname || '.' || relname                                   AS table_name,
@@ -82,7 +74,6 @@ def get_bloat_info(conn):
 
 
 def get_unused_indexes(conn):
-    """Находит индексы, которые не используются"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
         SELECT 
@@ -100,7 +91,6 @@ def get_unused_indexes(conn):
 
 
 def get_table_columns(conn, table_name):
-    """Получает информацию о колонках таблицы"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
                    SELECT column_name,
@@ -117,7 +107,6 @@ def get_table_columns(conn, table_name):
 
 
 def get_primary_keys(conn):
-    """Получает информацию о первичных ключах"""
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
                    SELECT tc.table_name,
@@ -135,7 +124,6 @@ def get_primary_keys(conn):
 
 
 def print_report():
-    """Выводит полный отчёт о состоянии БД"""
     print("\n" + "=" * 80)
     print(f" ОТЧЁТ О СОСТОЯНИИ БАЗЫ ДАННЫХ POSTGRESQL")
     print(f" Дата проверки: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

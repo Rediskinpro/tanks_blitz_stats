@@ -4,6 +4,113 @@ from common.db import get_db_connection, get_cursor, release_db_connection
 from common.logger import log_error, save_errors_to_db, export_errors_to_excel
 
 
+def update_tanks_stats():
+    print(f"\n📊 Обновление cumulative статистики танков...")
+    step_start = time.time()
+
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    try:
+        today_int = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+        print(f"    Шаг 1/2: Сбор последней статистики по игрокам-танкам...")
+
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_player_tank_stats;")
+        cursor.execute('''
+            CREATE TEMPORARY TABLE temp_latest_player_tank_stats AS
+            SELECT DISTINCT ON (pts.player_id, pts.tank_id)
+                pts.player_id,
+                pts.tank_id,
+                pts.battles,
+                pts.damage_dealt,
+                pts.damage_received,
+                pts.frags,
+                pts.hits,
+                pts.losses,
+                pts.shots,
+                pts.spotted,
+                pts.survived_battles,
+                pts.win_and_survived,
+                pts.wins
+            FROM player_tanks_stats pts
+            LEFT JOIN blacklist bl ON pts.player_id = bl.player_id AND pts.tank_id = bl.tank_id
+            WHERE bl.player_id IS NULL
+            ORDER BY pts.player_id, pts.tank_id, pts.collected_date DESC
+        ''')
+        cursor.execute("ANALYZE temp_latest_player_tank_stats;")
+        cursor.execute("SELECT COUNT(*) FROM temp_latest_player_tank_stats")
+        count_records = cursor.fetchone()[0]
+        print(f"   ✅ Найдено {count_records:,} записей игроков-танков")
+
+        print(f"   ⏳ Шаг 2/2: Агрегация по танкам и сохранение...")
+
+        cursor.execute('''
+            INSERT INTO tanks_stats (
+                tank_id
+                , calculated_date
+                , players_count
+                , battles
+                , damage_dealt
+                , damage_received
+                , frags
+                , hits
+                , losses
+                , shots
+                , spotted
+                , survived_battles
+                , win_and_survived
+                , wins
+            )
+            SELECT 
+                tank_id,
+                %s AS calculated_date,
+                COUNT(DISTINCT player_id) AS players_count,
+                SUM(battles)           AS battles,
+                SUM(damage_dealt)      AS damage_dealt,
+                SUM(damage_received)   AS damage_received,
+                SUM(frags)             AS frags,
+                SUM(hits)              AS hits,
+                SUM(losses)            AS losses,
+                SUM(shots)             AS shots,
+                SUM(spotted)           AS spotted,
+                SUM(survived_battles)  AS survived_battles,
+                SUM(win_and_survived)  AS win_and_survived,
+                SUM(wins)              AS wins
+            FROM temp_latest_player_tank_stats
+            GROUP BY tank_id
+            ON CONFLICT (tank_id, calculated_date) DO UPDATE SET
+                players_count    = EXCLUDED.players_count,
+                battles          = EXCLUDED.battles,
+                damage_dealt     = EXCLUDED.damage_dealt,
+                damage_received  = EXCLUDED.damage_received,
+                frags            = EXCLUDED.frags,
+                hits             = EXCLUDED.hits,
+                losses           = EXCLUDED.losses,
+                shots            = EXCLUDED.shots,
+                spotted          = EXCLUDED.spotted,
+                survived_battles = EXCLUDED.survived_battles,
+                win_and_survived = EXCLUDED.win_and_survived,
+                wins             = EXCLUDED.wins
+        ''', (today_int,))
+
+        rows_affected = cursor.rowcount
+        conn.commit()
+
+        step_elapsed = time.time() - step_start
+        print(f"   ✅ Обновлено/вставлено {rows_affected} танков за {step_elapsed:.1f} сек")
+
+        return rows_affected
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Ошибка обновления tanks_stats: {e}")
+        log_error("tanks_stats", "DB_ERROR", "PG_ERROR", str(e), "update_tanks_stats")
+        return 0
+    finally:
+        cursor.execute("DROP TABLE IF EXISTS temp_latest_player_tank_stats;")
+        release_db_connection(conn)
+
+
 def calculate_tanks_stats(days: int, table_name: str):
     print(f"\n📊 Расчёт статистики танков за {days} дней...")
     step_start = time.time()
@@ -31,8 +138,7 @@ def calculate_tanks_stats(days: int, table_name: str):
                 spotted,
                 survived_battles,
                 win_and_survived,
-                wins,
-                battle_life_time
+                wins
             FROM player_tanks_stats
             WHERE last_battle_time >= %s
             ORDER BY player_id, tank_id, collected_date DESC
@@ -59,8 +165,7 @@ def calculate_tanks_stats(days: int, table_name: str):
                 spotted,
                 survived_battles,
                 win_and_survived,
-                wins,
-                battle_life_time
+                wins
             FROM player_tanks_stats
             WHERE last_battle_time < %s
             ORDER BY player_id, tank_id, collected_date DESC
@@ -86,8 +191,7 @@ def calculate_tanks_stats(days: int, table_name: str):
                    a.spotted - b.spotted                   AS spotted_delta,
                    a.survived_battles - b.survived_battles AS survived_battles_delta,
                    a.win_and_survived - b.win_and_survived AS win_and_survived_delta,
-                   a.wins - b.wins                         AS wins_delta,
-                   a.battle_life_time - b.battle_life_time AS battle_life_time_delta
+                   a.wins - b.wins                         AS wins_delta
             FROM temp_latest_in_period a
             INNER JOIN temp_latest_before_period b
                 ON a.player_id = b.player_id AND a.tank_id = b.tank_id
@@ -103,7 +207,7 @@ def calculate_tanks_stats(days: int, table_name: str):
         cursor.execute(f'''
                 INSERT INTO {table_name} (tank_id, calculated_date, players_count, battles, damage_dealt,
                                          damage_received, frags, hits, losses, shots, spotted, survived_battles,
-                                         win_and_survived, wins, battle_life_time)
+                                         win_and_survived, wins)
                 SELECT tank_id,
                        %s                          AS calculated_date,
                        COUNT(*)                    AS players_count,
@@ -117,8 +221,7 @@ def calculate_tanks_stats(days: int, table_name: str):
                        SUM(spotted_delta)          AS spotted,
                        SUM(survived_battles_delta) AS survived_battles,
                        SUM(win_and_survived_delta) AS win_and_survived,
-                       SUM(wins_delta)             AS wins,
-                       SUM(battle_life_time_delta) AS battle_life_time
+                       SUM(wins_delta)             AS wins
                 FROM temp_deltas
                 GROUP BY tank_id
                 ON CONFLICT (tank_id, calculated_date) DO UPDATE SET players_count    = EXCLUDED.players_count,
@@ -132,8 +235,7 @@ def calculate_tanks_stats(days: int, table_name: str):
                                                                      spotted          = EXCLUDED.spotted,
                                                                      survived_battles = EXCLUDED.survived_battles,
                                                                      win_and_survived = EXCLUDED.win_and_survived,
-                                                                     wins             = EXCLUDED.wins,
-                                                                     battle_life_time = EXCLUDED.battle_life_time
+                                                                     wins             = EXCLUDED.wins
             ''', (today_int,))
 
         rows_affected = cursor.rowcount
@@ -142,7 +244,7 @@ def calculate_tanks_stats(days: int, table_name: str):
         conn.commit()
 
         step_elapsed = time.time() - step_start
-        print(f"✅ Статистика за {days} дней рассчитана за {step_elapsed:.1f} сек:")
+        print(f"✅ Статистика за {days} дней рассчитана за {step_elapsed:.1f} сек ({step_elapsed / 60:.1f} мин):")
         print(f"   Обновлено записей в {table_name}: {rows_affected}")
 
     except Exception as e:
@@ -151,7 +253,6 @@ def calculate_tanks_stats(days: int, table_name: str):
         log_error(table_name, "DB_ERROR", "PG_ERROR", str(e), f"calculate_{days}d")
 
     finally:
-        # Очищаем временные таблицы
         cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")
         cursor.execute("DROP TABLE IF EXISTS temp_latest_before_period;")
         cursor.execute("DROP TABLE IF EXISTS temp_deltas;")
@@ -164,6 +265,7 @@ def main():
     print(" РАСЧЁТ АГРЕГИРОВАННОЙ СТАТИСТИКИ ТАНКОВ")
     print("=" * 70)
 
+    update_tanks_stats()
     calculate_tanks_stats(30, "tanks_stats_30d")
     calculate_tanks_stats(90, "tanks_stats_90d")
 
