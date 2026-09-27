@@ -31,8 +31,6 @@ def main():
     print("\n" + "=" * 70)
     print(" ПОЛНЫЙ ЦИКЛ ОБНОВЛЕНИЯ ДАННЫХ")
     print(f" Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 70)
-
     memory_monitor.start()
 
     try:
@@ -40,8 +38,6 @@ def main():
             print(f"\n{'=' * 70}")
             print(f" ШАГ {i}/{len(SCRIPTS)}: {script}")
             print(f"{'=' * 70}")
-
-            memory_monitor.print_memory_status()
 
             result = subprocess.run([sys.executable, script])
 
@@ -58,7 +54,6 @@ def main():
     elapsed = time.time() - start_time
     print(f"\n{'=' * 70}")
     print(" ✅ ПОЛНЫЙ ЦИКЛ ЗАВЕРШЁН!")
-    print(f"{'=' * 70}")
     print(f"⏱️  Общее время: {elapsed:.0f} сек ({elapsed / 3600:.1f} ч)")
 
 

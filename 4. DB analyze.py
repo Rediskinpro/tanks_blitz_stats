@@ -1,6 +1,6 @@
 import time
 from common.db import get_db_connection, get_cursor, release_db_connection
-from common.logger import log_error, save_errors_to_db, export_errors_to_excel
+from common.logger import log_error, save_errors_to_db
 
 
 def clean_duplicates_in_players():
@@ -102,27 +102,19 @@ def vacuum_analyze():
 
 def main():
     start_time = time.time()
-    print("\n" + "=" * 70)
     print(" ОЧИСТКА ДУБЛИКАТОВ И ОБСЛУЖИВАНИЕ БД")
-    print("=" * 70)
 
     deleted_players = clean_duplicates_in_players()
     deleted_tanks = clean_duplicates_in_player_tanks_stats()
     vacuum_analyze()
 
     elapsed = time.time() - start_time
-    print("\n" + "=" * 70)
     print("📊 ИТОГОВЫЙ ОТЧЁТ")
-    print("=" * 70)
     print(f"   Удалено из players:            {deleted_players:,}")
     print(f"   Удалено из player_tanks_stats: {deleted_tanks:,}")
     print(f"   ⏱️ Общее время:                 {elapsed:.1f} сек ({elapsed / 60:.1f} мин)")
-
-    print("\n" + "=" * 70)
     print("💾 СОХРАНЕНИЕ ЛОГА ОШИБОК")
-    print("=" * 70)
     save_errors_to_db()
-    export_errors_to_excel()
 
 
 if __name__ == "__main__":

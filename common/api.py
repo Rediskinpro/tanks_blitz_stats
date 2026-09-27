@@ -1,7 +1,7 @@
 import time
 import threading
 import requests
-from common.config import API_KEY, BASE_URL, DELAY
+from common.config import API_KEY, BASE_URL
 from common.logger import log_error
 
 
@@ -25,13 +25,9 @@ class RateLimiter:
 rate_limiter = RateLimiter(15)
 
 
-def get_api_data(ids, endpoint, param_name="account_id", depth=0, max_depth=4, extra=None, retry_count=0,
-                 max_retries=3):
-    """
-    Универсальный запрос к API с умной обработкой ошибок и разделением батчей.
-    """
+def get_api_data(ids, endpoint, param_name="account_id", extra=None, depth=0, max_depth=6, is_retry=False):
     if not ids:
-        return {}
+        return {}, []
 
     rate_limiter.wait()
     ids_str = ",".join(map(str, ids))
@@ -44,55 +40,39 @@ def get_api_data(ids, endpoint, param_name="account_id", depth=0, max_depth=4, e
         data = response.json()
 
         if data.get("status") == "ok":
-            return data.get("data", {})
+            return data.get("data", {}), []
 
-        # Если статус не "ok", разбираем ошибку
         error_info = data.get("error", {})
         error_code = error_info.get("code")
 
-        # 1. Обработка 504 Gateway Timeout с экспоненциальной задержкой
-        if error_code == 504 and retry_count < max_retries:
-            sleep_time = 2 ** retry_count
-            time.sleep(sleep_time)
-            return get_api_data(ids, endpoint, param_name, depth, max_depth, extra, retry_count + 1, max_retries)
+        if error_code == 504 and not is_retry and (depth >= max_depth or len(ids) == 1):
+            time.sleep(2)
+            return get_api_data(ids, endpoint, param_name, extra, depth, max_depth, is_retry=True)
 
-        # 2. Если ошибка не 504 (или лимит попыток исчерпан), пробуем разделить батч
         if depth < max_depth and len(ids) > 1:
-            if depth == 0:  # Логируем только первоначальную ошибку большого батча
-                log_error(endpoint, error_info.get("field", "unknown"), str(error_code),
-                          error_info.get("message", "unknown"), ids_str)
-
-            time.sleep(DELAY)
+            time.sleep(0.1)
             mid = len(ids) // 2
-            # ВАЖНО: сбрасываем retry_count в 0 для маленьких батчей, чтобы у них был свой шанс на retry
-            left = get_api_data(ids[:mid], endpoint, param_name, depth + 1, max_depth, extra, 0, max_retries)
-            right = get_api_data(ids[mid:], endpoint, param_name, depth + 1, max_depth, extra, 0, max_retries)
-            left.update(right)
-            return left
+            left_data, left_failed = get_api_data(ids[:mid], endpoint, param_name, extra, depth + 1, max_depth)
+            right_data, right_failed = get_api_data(ids[mid:], endpoint, param_name, extra, depth + 1, max_depth)
+            left_data.update(right_data)
+            return left_data, left_failed + right_failed
 
-        # 3. Если разделить уже некуда (depth == max_depth или len(ids) == 1), логируем и сдаемся
-        if depth == 0:
-            log_error(endpoint, error_info.get("field", "unknown"), str(error_code),
-                      error_info.get("message", "unknown"), ids_str)
-        print(f"🔍 API запрос: {url}")
-        print(f"📤 Параметры: {params}")
-        print(f"📥 Ответ: status={response.status_code}")
-        print(f"📥 Тело ответа (первые 500 символов): {response.text[:500]}")
-        return {}
+        log_error(endpoint, error_info.get("field", "unknown"), str(error_code),
+                  error_info.get("message", "unknown"), ids_str)
+        return {}, list(ids)
 
     except Exception as e:
-        # Та же логика разделения батча при сетевых исключениях (Timeout, ConnectionError и т.д.)
+        if not is_retry and (depth >= max_depth or len(ids) == 1):
+            time.sleep(2)
+            return get_api_data(ids, endpoint, param_name, extra, depth, max_depth, is_retry=True)
+
         if depth < max_depth and len(ids) > 1:
-            if depth == 0:
-                log_error(endpoint, "EXCEPTION", "NETWORK_ERROR", str(e), ids_str)
-
-            time.sleep(DELAY)
+            time.sleep(0.1)
             mid = len(ids) // 2
-            left = get_api_data(ids[:mid], endpoint, param_name, depth + 1, max_depth, extra, 0, max_retries)
-            right = get_api_data(ids[mid:], endpoint, param_name, depth + 1, max_depth, extra, 0, max_retries)
-            left.update(right)
-            return left
+            left_data, left_failed = get_api_data(ids[:mid], endpoint, param_name, extra, depth + 1, max_depth)
+            right_data, right_failed = get_api_data(ids[mid:], endpoint, param_name, extra, depth + 1, max_depth)
+            left_data.update(right_data)
+            return left_data, left_failed + right_failed
 
-        if depth == 0:
-            log_error(endpoint, "EXCEPTION", "NETWORK_ERROR", str(e), ids_str)
-        return {}
+        log_error(endpoint, "EXCEPTION", "NETWORK_ERROR", str(e), ids_str)
+        return {}, list(ids)

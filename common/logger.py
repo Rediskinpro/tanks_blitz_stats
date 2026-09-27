@@ -25,8 +25,8 @@ def log_error(endpoint, error_field, error_code, error_message, ids):
             'endpoint': endpoint,
             'error_field': str(error_field),
             'error_code': str(error_code),
-            'error_message': str(error_message)[:200],
-            'ids': str(ids)[:100]
+            'error_message': str(error_message)[:1000],
+            'ids': str(ids)[:1000]
         })
 
 

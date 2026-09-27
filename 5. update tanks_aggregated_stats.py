@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timedelta
 from common.db import get_db_connection, get_cursor, release_db_connection
-from common.logger import log_error, save_errors_to_db, export_errors_to_excel
+from common.logger import log_error, save_errors_to_db
 
 
 def update_tanks_stats():
@@ -261,21 +261,16 @@ def calculate_tanks_stats(days: int, table_name: str):
 
 def main():
     start_time = time.time()
-    print("\n" + "=" * 70)
-    print(" РАСЧЁТ АГРЕГИРОВАННОЙ СТАТИСТИКИ ТАНКОВ")
-    print("=" * 70)
+    print("РАСЧЁТ АГРЕГИРОВАННОЙ СТАТИСТИКИ ТАНКОВ")
 
     update_tanks_stats()
     calculate_tanks_stats(30, "tanks_stats_30d")
     calculate_tanks_stats(90, "tanks_stats_90d")
 
     elapsed = time.time() - start_time
-    print(f"\n✅ Расчёт статистики завершён за {elapsed:.1f} сек ({elapsed / 60:.1f} мин)")
-    print("\n" + "=" * 70)
+    print(f"✅ Расчёт статистики завершён за {elapsed:.1f} сек ({elapsed / 60:.1f} мин)")
     print("💾 СОХРАНЕНИЕ ЛОГА ОШИБОК")
-    print("=" * 70)
     save_errors_to_db()
-    export_errors_to_excel()
 
 
 if __name__ == "__main__":

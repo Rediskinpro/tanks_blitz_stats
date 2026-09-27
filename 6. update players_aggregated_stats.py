@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timedelta
 from common.db import get_db_connection, get_cursor, release_db_connection
-from common.logger import log_error, save_errors_to_db, export_errors_to_excel
+from common.logger import log_error, save_errors_to_db
 
 
 def calculate_players_stats(days: int, table_name: str):
@@ -232,9 +232,7 @@ def calculate_players_stats(days: int, table_name: str):
 
 def main():
     start_time = time.time()
-    print("\n" + "=" * 70)
     print(" РАСЧЁТ АГРЕГИРОВАННОЙ СТАТИСТИКИ ИГРОКОВ")
-    print("=" * 70)
 
     calculate_players_stats(30, "players_stats_30d")
     calculate_players_stats(90, "players_stats_90d")
@@ -242,11 +240,8 @@ def main():
     elapsed = time.time() - start_time
     print(f"\n✅ Расчёт статистики завершён за {elapsed:.1f} сек ({elapsed / 60:.1f} мин)")
 
-    print("\n" + "=" * 70)
     print("💾 СОХРАНЕНИЕ ЛОГА ОШИБОК")
-    print("=" * 70)
     save_errors_to_db()
-    export_errors_to_excel()
 
 
 if __name__ == "__main__":
