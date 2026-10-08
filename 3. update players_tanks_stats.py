@@ -218,7 +218,7 @@ def main():
         return
 
     print(f"🚀 Начинаем сбор статистики танков для {len(player_ids)} игроков...")
-    print(f"⚙️ Потоков: {MAX_WORKERS} | Промежуточное сохранение каждые {PLAYERS_SAVE_INTERVAL} игроков")
+    print(f"⚙️ Потоков: {MAX_WORKERS - 1} | Промежуточное сохранение каждые {PLAYERS_SAVE_INTERVAL} игроков")
 
     total_records_saved = 0
     total_tanks_skipped = 0
@@ -229,7 +229,7 @@ def main():
     start_time = time.time()
 
     for batch_ids, tanks_lbt in get_tanks_last_battle_times_batched(player_ids, batch_size):
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS - 1) as executor:
             futures = {executor.submit(fetch_player_tanks_stats, player_id, tanks_lbt, today_int): player_id for player_id in batch_ids}
             for future in as_completed(futures):
                 player_id = futures[future]
