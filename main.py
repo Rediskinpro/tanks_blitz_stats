@@ -6,12 +6,12 @@ from common.memory_monitor import memory_monitor
 from common.db import close_all_connections, get_db_connection, get_cursor, release_db_connection
 
 SCRIPTS = [
-    "1. update clans.py",
-    "2. update players.py",
-    "3. update players_tanks_stats.py",
-    "4. DB analyze.py",
-    "5. update tanks_aggregated_stats.py",
-    "6. update players_aggregated_stats.py"
+    "1. update clans.py"
+    , "2. update players.py"
+    , "3. update players_tanks_stats.py"
+    , "4. DB analyze.py"
+    # , "5. updatgite tanks_aggregated_stats.py"
+    # , "6. update players_aggregated_stats.py"
     ]
 
 def main():

@@ -1,7 +1,7 @@
 import time
 import threading
 import requests
-from common.config import API_KEY, BASE_URL
+from common.config import API_KEYS, BASE_URL
 from common.logger import log_error
 
 
@@ -22,16 +22,19 @@ class RateLimiter:
             self.times.append(time.time())
 
 
-rate_limiter = RateLimiter(15)
+rate_limiters = {i: RateLimiter(15) for i in range(1, len(API_KEYS) + 1)}
 
 
-def get_api_data(ids, endpoint, param_name="account_id", extra=None, depth=0, max_depth=6, is_retry=False):
+def get_api_data(ids, endpoint, param_name="account_id", extra=None, depth=0, max_depth=6, is_retry=False, key_number=1):
     if not ids:
         return {}, []
 
+    rate_limiter = rate_limiters[key_number]
+    api_key = API_KEYS[key_number - 1]
+
     rate_limiter.wait()
     ids_str = ",".join(map(str, ids))
-    params = {"application_id": API_KEY, param_name: ids_str}
+    params = {"application_id": api_key, param_name: ids_str}
     if extra:
         params["extra"] = extra
 
@@ -47,30 +50,29 @@ def get_api_data(ids, endpoint, param_name="account_id", extra=None, depth=0, ma
 
         if error_code == 504 and not is_retry and (depth >= max_depth or len(ids) == 1):
             time.sleep(2)
-            return get_api_data(ids, endpoint, param_name, extra, depth, max_depth, is_retry=True)
+            return get_api_data(ids, endpoint, param_name, extra, depth, max_depth, is_retry=True, key_number=key_number)
 
         if depth < max_depth and len(ids) > 1:
             time.sleep(0.1)
             mid = len(ids) // 2
-            left_data, left_failed = get_api_data(ids[:mid], endpoint, param_name, extra, depth + 1, max_depth)
-            right_data, right_failed = get_api_data(ids[mid:], endpoint, param_name, extra, depth + 1, max_depth)
+            left_data, left_failed = get_api_data(ids[:mid], endpoint, param_name, extra, depth + 1, max_depth, key_number=key_number)
+            right_data, right_failed = get_api_data(ids[mid:], endpoint, param_name, extra, depth + 1, max_depth, key_number=key_number)
             left_data.update(right_data)
             return left_data, left_failed + right_failed
 
-        log_error(endpoint, error_info.get("field", "unknown"), str(error_code),
-                  error_info.get("message", "unknown"), ids_str)
+        log_error(endpoint, error_info.get("field", "unknown"), str(error_code), error_info.get("message", "unknown"), ids_str)
         return {}, list(ids)
 
     except Exception as e:
         if not is_retry and (depth >= max_depth or len(ids) == 1):
             time.sleep(2)
-            return get_api_data(ids, endpoint, param_name, extra, depth, max_depth, is_retry=True)
+            return get_api_data(ids, endpoint, param_name, extra, depth, max_depth, is_retry=True, key_number=key_number)
 
         if depth < max_depth and len(ids) > 1:
             time.sleep(0.1)
             mid = len(ids) // 2
-            left_data, left_failed = get_api_data(ids[:mid], endpoint, param_name, extra, depth + 1, max_depth)
-            right_data, right_failed = get_api_data(ids[mid:], endpoint, param_name, extra, depth + 1, max_depth)
+            left_data, left_failed = get_api_data(ids[:mid], endpoint, param_name, extra, depth + 1, max_depth, key_number=key_number)
+            right_data, right_failed = get_api_data(ids[mid:], endpoint, param_name, extra, depth + 1, max_depth, key_number=key_number)
             left_data.update(right_data)
             return left_data, left_failed + right_failed
 
