@@ -12,8 +12,7 @@ def calculate_players_stats(days: int, table_name: str):
     cursor = get_cursor(conn)
     try:
         today_int = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-        period_start_int = int((datetime.now() - timedelta(days=days)).replace(
-            hour=0, minute=0, second=0, microsecond=0).timestamp())
+        period_start_int = int((datetime.now() - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
         print(f"    Шаг 1/4: Поиск последних записей игроков за период...")
         cursor.execute("DROP TABLE IF EXISTS temp_latest_in_period;")

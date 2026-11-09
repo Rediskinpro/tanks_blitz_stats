@@ -1,10 +1,12 @@
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from common.config import BATCH_SIZE, BATCH_WORKERS, API_KEYS
+from common.config import BATCH_SIZE, BATCH_WORKERS
 from common.db import get_db_connection, get_cursor, release_db_connection, db_lock
 from common.api import get_api_data
 from common.logger import log_error, save_errors_to_db
+
+INACTIVE_THRESHOLD_SECONDS = 91 * 86400  # 91 день в секундах
 
 
 def get_all_player_ids():
@@ -38,9 +40,9 @@ def get_players_last_battle_times():
     return result
 
 
-def process_players_batch(batch, players_lbt, key_number):
-    api_data, api_failed_ids = get_api_data(batch, "wotb/account/info/", param_name="account_id", extra="statistics.rating", key_number=key_number)
-    clan_api_data, clan_failed_ids = get_api_data(batch, "wotb/clans/accountinfo/", param_name="account_id", extra="clan", key_number=key_number)
+def process_players_batch(batch, players_lbt):
+    api_data, api_failed_ids = get_api_data(batch, "wotb/account/info/", param_name="account_id", extra="statistics.rating")
+    clan_api_data, clan_failed_ids = get_api_data(batch, "wotb/clans/accountinfo/", param_name="account_id", extra="clan")
 
     failed_ids = list(set(api_failed_ids))
 
@@ -55,6 +57,7 @@ def process_players_batch(batch, players_lbt, key_number):
         try:
             now = datetime.now()
             current_date_int = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+            current_timestamp = int(now.timestamp())
 
             for player_id_str, info in api_data.items():
                 player_id = int(player_id_str)
@@ -64,9 +67,14 @@ def process_players_batch(batch, players_lbt, key_number):
 
                 nickname = info.get('nickname')
                 lbt_int = info.get('last_battle_time')
+
+                if lbt_int is None or (current_timestamp - lbt_int) > INACTIVE_THRESHOLD_SECONDS:
+                    players_skipped += 1
+                    continue
+
                 prev_lbt = players_lbt.get(player_id)
 
-                if prev_lbt is not None and lbt_int is not None and prev_lbt >= lbt_int:
+                if prev_lbt is not None and prev_lbt >= lbt_int:
                     players_skipped += 1
                     continue
 
@@ -227,8 +235,6 @@ def main():
     batches = [player_ids[i:i + BATCH_SIZE] for i in range(0, len(player_ids), BATCH_SIZE)]
     total_batches = len(batches)
     print(f"📦 Разбито на {total_batches} батчей по {BATCH_SIZE} игроков.")
-    num_keys = len(API_KEYS)
-    key_numbers = [(i % num_keys) + 1 for i in range(total_batches)]
 
     total_players_saved = 0
     total_players_skipped = 0
@@ -239,8 +245,8 @@ def main():
     progress_interval = 1000
     start_time_threading = time.time()
 
-    with ThreadPoolExecutor(max_workers=BATCH_WORKERS * len(API_KEYS)) as executor:
-        futures = [executor.submit(process_players_batch, batch, players_lbt, key_numbers[i]) for i, batch in enumerate(batches)]
+    with ThreadPoolExecutor(max_workers=BATCH_WORKERS) as executor:
+        futures = [executor.submit(process_players_batch, batch, players_lbt) for i, batch in enumerate(batches)]
         for future in as_completed(futures):
             try:
                 players_saved, players_skipped, members_updated, null_response, failed_ids = future.result()

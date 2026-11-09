@@ -7,6 +7,8 @@ from common.db import get_db_connection, get_cursor, release_db_connection, db_l
 from common.api import get_api_data
 from common.logger import log_error, save_errors_to_db
 
+INACTIVE_THRESHOLD_SECONDS = 91 * 86400  # 91 день в секундах
+
 
 def get_active_players(today_int):
     conn = get_db_connection()
@@ -53,6 +55,7 @@ def get_tanks_last_battle_times_batched(player_ids, batch_size=5000):
         tanks_lbt = {}
         conn = get_db_connection()
         cursor = get_cursor(conn)
+        cursor.execute("SET work_mem = '128MB';")
         try:
             chunk_size = 5000
             for j in range(0, len(batch_ids), chunk_size):
@@ -97,9 +100,14 @@ def fetch_player_tanks_stats(player_id, tanks_lbt, today_int):
         tank_id = tank.get("tank_id")
         raw_lbt = tank.get("last_battle_time")
         lbt_int = raw_lbt if raw_lbt else None
+
+        if lbt_int is None or (today_int - lbt_int) > INACTIVE_THRESHOLD_SECONDS:
+            skipped_count += 1
+            continue
+
         key = (player_id, tank_id)
         prev_lbt = tanks_lbt.get(key)
-        if prev_lbt is not None and (lbt_int is None or prev_lbt >= lbt_int):
+        if prev_lbt is not None and prev_lbt >= lbt_int:
             skipped_count += 1
             continue
 

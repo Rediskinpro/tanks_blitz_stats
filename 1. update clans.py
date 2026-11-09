@@ -2,7 +2,7 @@ import time
 import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from common.config import BATCH_SIZE, BATCH_WORKERS, API_KEYS
+from common.config import BATCH_SIZE, BATCH_WORKERS
 from common.db import get_db_connection, get_cursor, release_db_connection, db_lock
 from common.api import get_api_data
 from common.logger import log_error, save_errors_to_db
@@ -20,8 +20,8 @@ def get_clan_ids_from_db():
     return clan_ids
 
 
-def process_clan_batch(batch_clan_ids, key_number):
-    api_data, failed_ids = get_api_data(batch_clan_ids, "wotb/clans/info/", param_name="clan_id", key_number=key_number)
+def process_clan_batch(batch_clan_ids):
+    api_data, failed_ids = get_api_data(batch_clan_ids, "wotb/clans/info/", param_name="clan_id")
     clans_processed = 0
     clans_with_errors = 0
     clans_with_null_response = 0
@@ -118,15 +118,13 @@ def main():
     batches = [clan_ids[i:i + BATCH_SIZE] for i in range(0, len(clan_ids), BATCH_SIZE)]
     print(f"📦 Разбито на {len(batches)} батчей по {BATCH_SIZE} кланов.")
 
-    num_keys = len(API_KEYS)
-    key_numbers = [(i % num_keys) + 1 for i in range(len(batches))]
     total_processed = 0
     total_errors = 0
     total_null_response = 0
     total_failed = 0
 
-    with ThreadPoolExecutor(max_workers=BATCH_WORKERS * len(API_KEYS)) as executor:
-        results = list(executor.map(process_clan_batch, batches, key_numbers))
+    with ThreadPoolExecutor(max_workers=BATCH_WORKERS) as executor:
+        results = list(executor.map(process_clan_batch, batches))
         for processed, errors, null_response, failed_ids in results:
             total_processed += processed
             total_errors += errors
